@@ -16,11 +16,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from discovery_schema import validate_triplet_group
+from discovery_schema import (
+    format_prompt,
+    parse_json_or_yaml,
+    read_expert_blueprint,
+    read_expert_profile,
+    resolve_expertise_type,
+    validate_triplet_group,
+)
 
 PROMPT_TEMPLATE_PATH = Path(__file__).parent.parent / "prompts" / "discovery" / "triplet_builder.md"
-
-_TESTABILITY_RANK = {"high": 2, "medium": 1, "low": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -37,24 +42,6 @@ def read_latent_variables(base_dir: str, slug: str) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_expert_profile(base_dir: str, slug: str) -> dict:
-    path = Path(base_dir) / slug / "discovery" / "expert_profile.json"
-    if not path.exists():
-        raise FileNotFoundError(f"expert_profile.json not found at {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def read_expert_blueprint(base_dir: str, slug: str) -> dict | None:
-    """Load optional expert_blueprint.json from the discovery directory."""
-    path = Path(base_dir) / slug / "discovery" / "expert_blueprint.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"expert_blueprint.json is invalid JSON at {path}: {exc}") from exc
-
-
 def filter_target_variables(
     variables: list[dict],
     target_ids: list[str] | None = None,
@@ -65,18 +52,6 @@ def filter_target_variables(
         id_set = set(target_ids)
         filtered = [v for v in filtered if v.get("id") in id_set]
     return filtered
-
-
-def resolve_expertise_type(base_dir: str, slug: str) -> str:
-    meta_path = Path(base_dir) / slug / "meta.json"
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            if meta.get("expertise_type"):
-                return meta["expertise_type"]
-        except (json.JSONDecodeError, OSError):
-            pass
-    return "troubleshooter"
 
 
 # ---------------------------------------------------------------------------
@@ -95,22 +70,18 @@ def assemble_prompt(
     expert_blueprint_json: str = "（未提供）",
     decision_scenarios_json: str = "[]",
 ) -> str:
-    """Replace all {variable} placeholders in the template."""
-    replacements = {
-        "{name}": name,
-        "{expertise_type}": expertise_type,
-        "{domain}": domain,
-        "{target_variables_json}": target_variables_json,
-        "{expert_profile_json}": expert_profile_json,
-        "{domain_context_json}": domain_context_json,
-        "{known_decisions_json}": known_decisions_json,
-        "{expert_blueprint_json}": expert_blueprint_json,
-        "{decision_scenarios_json}": decision_scenarios_json,
-    }
-    result = template
-    for key, value in replacements.items():
-        result = result.replace(key, value)
-    return result
+    return format_prompt(
+        template,
+        name=name,
+        expertise_type=expertise_type,
+        domain=domain,
+        target_variables_json=target_variables_json,
+        expert_profile_json=expert_profile_json,
+        domain_context_json=domain_context_json,
+        known_decisions_json=known_decisions_json,
+        expert_blueprint_json=expert_blueprint_json,
+        decision_scenarios_json=decision_scenarios_json,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -294,42 +265,6 @@ def generate_interview_script(groups: list[dict], variables: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Output parsing
-# ---------------------------------------------------------------------------
-
-def _parse_output_file(output_path: Path) -> list[dict]:
-    text = output_path.read_text(encoding="utf-8")
-    try:
-        data = json.loads(text)
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            return data.get("triplet_groups", data)
-        return data
-    except json.JSONDecodeError:
-        pass
-    try:
-        import yaml  # type: ignore
-        data = yaml.safe_load(text)
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            return data.get("triplet_groups", data)
-        raise ValueError(f"Unexpected YAML type: {type(data)}")
-    except ImportError:
-        print(
-            "错误：输入文件不是有效 JSON，且 PyYAML 未安装。\n"
-            "请安装 PyYAML（pip install pyyaml）以支持 YAML 输入，"
-            "或将 AI 输出保存为 JSON 格式后重试。",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    except Exception as exc:
-        print(f"错误：无法解析输出文件（{exc}）", file=sys.stderr)
-        sys.exit(1)
-
-
-# ---------------------------------------------------------------------------
 # Meta update
 # ---------------------------------------------------------------------------
 
@@ -436,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"错误：输出文件不存在：{output_path}", file=sys.stderr)
         return 1
 
-    groups = _parse_output_file(output_path)
+    groups = parse_json_or_yaml(output_path, "triplet_groups")
     if not isinstance(groups, list):
         print(f"错误：解析结果不是列表，得到 {type(groups)}", file=sys.stderr)
         return 1

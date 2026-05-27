@@ -11,14 +11,13 @@ import argparse
 import json
 import shutil
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+
+from skill_schema import now_iso
+
 MAX_VERSIONS = 10
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def list_versions(skill_dir: Path) -> list[dict]:

@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from discovery_schema import build_expert_profile, validate_expert_profile
+from discovery_schema import build_expert_profile, format_prompt, parse_json_or_yaml, validate_expert_profile
 
 PROMPT_TEMPLATE_PATH = Path(__file__).parent.parent / "prompts" / "discovery" / "pre_research.md"
 
@@ -91,22 +91,18 @@ def assemble_prompt(
     expertise_description: str = "",
     domain_background: str = "",
 ) -> str:
-    """Replace all {variable} placeholders in the template with actual values."""
-    replacements = {
-        "{name}": name,
-        "{title}": title or "（未填写）",
-        "{domain}": domain or "（未填写）",
-        "{years}": years or "（未填写）",
-        "{expertise_type}": expertise_type,
-        "{materials}": materials_text or "（未提供）",
-        "{open_research}": open_research or "（未提供）",
-        "{expertise_description}": expertise_description or "（未填写）",
-        "{domain_background}": domain_background or "（未填写）",
-    }
-    result = template
-    for key, value in replacements.items():
-        result = result.replace(key, value)
-    return result
+    return format_prompt(
+        template,
+        name=name,
+        title=title or "（未填写）",
+        domain=domain or "（未填写）",
+        years=years or "（未填写）",
+        expertise_type=expertise_type,
+        materials=materials_text or "（未提供）",
+        open_research=open_research or "（未提供）",
+        expertise_description=expertise_description or "（未填写）",
+        domain_background=domain_background or "（未填写）",
+    )
 
 
 def check_p2_quality_gate(profile: dict) -> list[str]:
@@ -125,37 +121,6 @@ def check_p2_quality_gate(profile: dict) -> list[str]:
     return errors
 
 
-def _parse_output_file(output_path: Path) -> dict:
-    """Parse an AI output file (JSON or YAML) and return the profile dict."""
-    text = output_path.read_text(encoding="utf-8")
-
-    # Try JSON first (standard library only)
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data.get("expert_profile", data)
-        return data
-    except json.JSONDecodeError:
-        pass
-
-    # Try YAML (optional dependency)
-    try:
-        import yaml  # type: ignore
-        data = yaml.safe_load(text)
-        if isinstance(data, dict):
-            return data.get("expert_profile", data)
-        raise ValueError(f"YAML parsed to unexpected type: {type(data)}")
-    except ImportError:
-        print(
-            "错误：输入文件不是有效 JSON，且 PyYAML 未安装。\n"
-            "请安装 PyYAML（pip install pyyaml）以支持 YAML 输入，"
-            "或将 AI 输出保存为 JSON 格式后重试。",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    except Exception as exc:
-        print(f"错误：无法解析输出文件（{exc}）", file=sys.stderr)
-        sys.exit(1)
 
 
 def _update_meta_json(meta_path: Path) -> None:
@@ -248,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"错误：输出文件不存在：{output_path}", file=sys.stderr)
             return 1
 
-        profile_data = _parse_output_file(output_path)
+        profile_data = parse_json_or_yaml(output_path, "expert_profile")
 
         # Schema validation
         schema_errors = validate_expert_profile(profile_data)

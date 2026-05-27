@@ -22,12 +22,6 @@ PRIMARY_ARTIFACTS = (
     "heuristics.json",
     "manifest.json",
 )
-# Discovery artifacts (optional, generated only in discovery mode)
-DISCOVERY_ARTIFACTS = (
-    "latent_report.md",
-    "interview_transcript.md",
-)
-
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

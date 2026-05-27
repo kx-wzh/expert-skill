@@ -42,6 +42,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 import argparse
@@ -725,7 +726,6 @@ def fetch_doc_content(doc_token: str, doc_type: str, config: dict) -> str:
 
 def collect_docs(user: dict, doc_limit: int, config: dict) -> str:
     """采集目标用户的文档"""
-    import re
     user_open_id = user.get("open_id") or user.get("user_id", "")
     name = user.get("name", "")
 

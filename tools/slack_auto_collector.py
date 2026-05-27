@@ -33,6 +33,7 @@ Slack 自动采集器
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 import argparse
@@ -472,7 +473,6 @@ def fetch_messages_from_channel(
 
 def _is_noise(text: str) -> bool:
     """判断是否是无意义消息（纯表情、@mention、URL）"""
-    import re
     # 去掉 Slack 特殊格式后几乎为空
     cleaned = re.sub(r"<[^>]+>", "", text).strip()
     cleaned = re.sub(r":[a-z_]+:", "", cleaned).strip()

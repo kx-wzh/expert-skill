@@ -8,6 +8,8 @@ expert profiles, latent variable candidates, triplet question groups, and analys
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
 
@@ -26,8 +28,6 @@ DISCOVERY_STATUSES = (
 
 _VALID_SOURCE_TYPES = {"comparison_gap", "domain_disagreement", "silent_topic", "rule_boundary"}
 _VALID_TESTABILITY = {"high", "medium", "low"}
-_VALID_AWARENESS_STATES = {"explicit", "semi_latent", "deep_latent"}
-_VALID_CONFIDENCE = {"high", "medium", "low"}
 
 
 def build_expert_profile(
@@ -422,3 +422,75 @@ def get_discovery_dir(base_dir: str, slug: str) -> Path:
 def get_discovery_file_path(base_dir: str, slug: str, filename: str) -> Path:
     """Return the full path to a specific discovery intermediate file."""
     return get_discovery_dir(base_dir, slug) / filename
+
+
+_YAML_IMPORT_ERROR_MSG = (
+    "错误：输入文件不是有效 JSON，且 PyYAML 未安装。\n"
+    "请安装 PyYAML（pip install pyyaml）以支持 YAML 输入，"
+    "或将 AI 输出保存为 JSON 格式后重试。"
+)
+
+
+def format_prompt(template: str, **kwargs: str) -> str:
+    """Replace {key} placeholders in template with corresponding kwargs values."""
+    for key, value in kwargs.items():
+        template = template.replace(f"{{{key}}}", value)
+    return template
+
+
+def parse_json_or_yaml(path: Path, root_key: str | None = None):
+    """Read path as JSON or YAML; if root_key given and result is a dict, unwrap that key."""
+    text = path.read_text(encoding="utf-8")
+
+    def _unwrap(data):
+        if root_key is not None and isinstance(data, dict):
+            return data.get(root_key, data)
+        return data
+
+    try:
+        return _unwrap(json.loads(text))
+    except json.JSONDecodeError:
+        pass
+    try:
+        import yaml  # type: ignore
+        return _unwrap(yaml.safe_load(text))
+    except ImportError:
+        print(_YAML_IMPORT_ERROR_MSG, file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"错误：无法解析输出文件（{exc}）", file=sys.stderr)
+        sys.exit(1)
+
+
+def read_expert_profile(base_dir: str, slug: str) -> dict:
+    path = get_discovery_file_path(base_dir, slug, "expert_profile.json")
+    if not path.exists():
+        raise FileNotFoundError(
+            f"expert_profile.json not found at {path}\n"
+            "Run pre_researcher.py --parse-output first (P2 must complete before P3)."
+        )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_expert_blueprint(base_dir: str, slug: str) -> dict | None:
+    path = get_discovery_file_path(base_dir, slug, "expert_blueprint.json")
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"expert_blueprint.json is invalid JSON at {path}: {exc}") from exc
+
+
+def resolve_expertise_type(base_dir: str, slug: str, explicit_type: str = "") -> str:
+    if explicit_type:
+        return explicit_type
+    meta_path = Path(base_dir) / slug / "meta.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if meta.get("expertise_type"):
+                return meta["expertise_type"]
+        except (json.JSONDecodeError, OSError):
+            pass
+    return "troubleshooter"

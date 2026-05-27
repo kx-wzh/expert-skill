@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import json
 import argparse
@@ -131,7 +132,6 @@ def call_mcp(tool: str, params: dict, config: dict) -> dict:
 
 def extract_doc_token(url: str) -> tuple[str, str]:
     """从飞书 URL 中提取文档 token 和类型"""
-    import re
     patterns = [
         (r"/wiki/([A-Za-z0-9]+)", "wiki"),
         (r"/docx/([A-Za-z0-9]+)", "docx"),

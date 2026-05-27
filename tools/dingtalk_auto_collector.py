@@ -30,10 +30,11 @@ import json
 import sys
 import time
 import argparse
-import platform
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
+
+from collector_utils import get_default_chrome_profile
 
 try:
     import requests
@@ -481,17 +482,6 @@ def collect_bitables(user: dict, config: dict) -> str:
 
 # ─── 消息记录（浏览器方案）────────────────────────────────────────────────────
 
-def get_default_chrome_profile() -> str:
-    system = platform.system()
-    if system == "Darwin":
-        return str(Path.home() / "Library/Application Support/Google/Chrome/Default")
-    elif system == "Linux":
-        return str(Path.home() / ".config/google-chrome/Default")
-    elif system == "Windows":
-        import os
-        return str(Path(os.environ.get("LOCALAPPDATA", "")) / "Google/Chrome/User Data/Default")
-    return str(Path.home() / ".config/google-chrome/Default")
-
 
 def collect_messages_browser(
     name: str,
@@ -508,8 +498,6 @@ def collect_messages_browser(
             "⚠️  未安装 Playwright，无法采集消息记录。\n"
             "请运行：pip3 install playwright && playwright install chromium\n"
         )
-
-    import re
 
     profile = chrome_profile or get_default_chrome_profile()
     print(f"  启动浏览器抓取钉钉消息（{'无头' if headless else '有界面'}）...", file=sys.stderr)
