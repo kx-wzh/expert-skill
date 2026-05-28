@@ -233,6 +233,7 @@ class CameraAssistWorker:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._suggestions: list[dict] = []
+        self._answer_generation = 0
         self._lock = threading.Lock()
 
     def capture_once(self, triplet_id: str, layer: str) -> list[dict]:
@@ -278,22 +279,28 @@ class CameraAssistWorker:
                 self.print_fn(f"camera frame cleanup failed: {exc}")
 
     def start_answer(self, triplet_id: str, layer: str) -> None:
+        with self._lock:
+            self._answer_generation += 1
+            generation = self._answer_generation
+            self._suggestions = []
+
         if self._thread is not None and self._thread.is_alive():
             self._stop_event.set()
             self._thread.join(timeout=0.1)
-            return
+            if self._thread.is_alive():
+                return
+            self._thread = None
         if self._thread is not None:
             self._thread = None
         self._stop_event.clear()
-        with self._lock:
-            self._suggestions = []
 
         def _loop() -> None:
             while not self._stop_event.is_set():
                 suggestions = self.capture_once(triplet_id, layer)
                 if suggestions:
                     with self._lock:
-                        self._suggestions.extend(suggestions)
+                        if generation == self._answer_generation and not self._stop_event.is_set():
+                            self._suggestions.extend(suggestions)
                 self._stop_event.wait(self.frame_interval)
 
         self._thread = threading.Thread(target=_loop, daemon=True)

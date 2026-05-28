@@ -3,6 +3,7 @@
 
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -1391,3 +1392,49 @@ def test_stop_answer_retains_thread_when_join_times_out_and_clears_completed_thr
 
     assert worker._thread is None
     assert completed_thread.join_calls
+
+
+def test_camera_assist_worker_does_not_return_late_previous_layer_suggestions(tmp_path):
+    responses = tmp_path / "responses"
+    responses.mkdir()
+    capture_started = threading.Event()
+    release_late_capture = threading.Event()
+
+    def fake_capture(path):
+        Path(path).write_bytes(b"fake image")
+        capture_started.set()
+        release_late_capture.wait(timeout=2.0)
+        frame_id = Path(path).stem
+        (responses / f"{frame_id}.json").write_text(
+            json.dumps([
+                {
+                    "signal": "hesitated",
+                    "confidence": "medium",
+                    "reason": "late previous layer",
+                    "suggested_probe": "你在衡量什么？",
+                }
+            ], ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return True, ""
+
+    worker = iss.CameraAssistWorker(
+        temp_root=tmp_path,
+        frame_interval=0.01,
+        analysis_timeout=0.01,
+        print_fn=lambda x: None,
+        capture_frame_fn=fake_capture,
+        session_id="sess-late",
+        response_dir=responses,
+    )
+
+    worker.start_answer("tg_001", "A")
+    assert capture_started.wait(timeout=1.0)
+    worker.stop_answer()
+
+    worker.start_answer("tg_001", "B")
+    release_late_capture.set()
+    time.sleep(0.05)
+    suggestions = worker.stop_answer()
+
+    assert all(item["reason"] != "late previous layer" for item in suggestions)
