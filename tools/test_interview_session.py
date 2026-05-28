@@ -111,6 +111,16 @@ def _full_session_inputs(group_count=1):
     return seq
 
 
+def _full_camera_session_inputs(group_count=1, camera_choice="n"):
+    """Return full-session inputs when each layer has one camera suggestion."""
+    seq = []
+    for _ in range(group_count):
+        seq += ["回答A", "/done", camera_choice, "追问回答A", "", ""]
+        seq += ["回答B", "/done", camera_choice, "", "", ""]
+        seq += ["回答C", "/done", camera_choice, "", "", ""]
+    return seq
+
+
 # ---------------------------------------------------------------------------
 # 1. test_dry_run_prints_script_does_not_write
 # ---------------------------------------------------------------------------
@@ -205,7 +215,7 @@ def test_probe_modified_text_recorded():
 
 
 def test_run_one_layer_collects_camera_suggestions_from_worker():
-    responses = iter(["专家回答A", "/done", "追问回答A", "", ""])
+    responses = iter(["专家回答A", "/done", "n", "追问回答A", "", ""])
     events = []
 
     class FakeWorker:
@@ -243,6 +253,7 @@ def test_run_one_layer_collects_camera_suggestions_from_worker():
         ("input", "专家回答A"),
         ("input", "/done"),
         ("stop",),
+        ("input", "n"),
         ("input", "追问回答A"),
         ("input", ""),
         ("input", ""),
@@ -250,6 +261,43 @@ def test_run_one_layer_collects_camera_suggestions_from_worker():
     assert record["expert_answer"] == "专家回答A"
     assert record["camera_suggestions"][0]["signal"] == "hesitated"
     assert record["camera_assist_enabled"] is True
+
+
+def test_run_one_layer_accepts_camera_suggestion_as_confirmed_signal():
+    responses = iter(["专家回答A", "/done", "y", "追问回答A", "", ""])
+    printed = []
+
+    class FakeWorker:
+        def start_answer(self, triplet_id, layer):
+            pass
+
+        def stop_answer(self):
+            return [
+                iss.build_camera_suggestion(
+                    signal="hesitated",
+                    confidence="medium",
+                    reason="回答期间有明显停顿",
+                    suggested_probe="你在衡量什么？",
+                )
+            ]
+
+    record = iss.run_one_layer(
+        SAMPLE_GROUP,
+        "A",
+        lambda prompt="": next(responses),
+        printed.append,
+        answer_input_mode="manual_cli",
+        camera_assist_enabled=True,
+        camera_assist_worker=FakeWorker(),
+    )
+
+    assert "hesitated" in record["signals_observed"]
+    assert record["followup_asked"] == "你在衡量什么？"
+    assert record["probe_suggestion"] == "你在衡量什么？"
+    assert record["probe_adopted"] is True
+    assert record["camera_suggestions"][0]["accepted"] is True
+    assert record["camera_suggestions"][0]["final_probe"] == "你在衡量什么？"
+    assert "摄像头辅助建议" in "\n".join(printed)
 
 
 # ---------------------------------------------------------------------------
@@ -1173,9 +1221,9 @@ def test_camera_assist_default_off_records_no_camera_suggestions(tmp_path):
     )
     assert ret == 0
     transcript = json.loads((discovery / "interview_transcript.json").read_text(encoding="utf-8"))
-    assert all(record.get("camera_suggestions") in (None, []) for record in transcript)
-    assert all(record.get("camera_assist_enabled") in (None, False) for record in transcript)
-    assert all(record.get("answer_input_mode", "manual_cli") == "manual_cli" for record in transcript)
+    assert all("camera_suggestions" not in record for record in transcript)
+    assert all("camera_assist_enabled" not in record for record in transcript)
+    assert all("answer_input_mode" not in record for record in transcript)
 
 
 def test_camera_assist_cli_records_enabled_fields_without_worker(tmp_path):
@@ -1199,7 +1247,7 @@ def test_camera_assist_cli_records_enabled_fields_without_worker(tmp_path):
 
 def test_camera_assist_main_uses_factory_worker_suggestions(tmp_path):
     base, discovery = setup_discovery_dir(tmp_path, [SAMPLE_GROUP], meta={"discovery": {}})
-    inputs = _full_session_inputs(group_count=1)
+    inputs = _full_camera_session_inputs(group_count=1)
     factory_calls = []
 
     class FakeWorker:

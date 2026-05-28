@@ -71,7 +71,7 @@ def build_interview_record(
     camera_suggestions: list[dict] | None = None,
 ) -> dict:
     """Build a single interview record dict."""
-    return {
+    record = {
         "triplet_id": triplet_id,
         "target_variable": target_variable,
         "question_layer": layer,
@@ -84,10 +84,13 @@ def build_interview_record(
         "probe_adopted": probe_adopted,
         "probe_modified_text": probe_modified_text,
         "operator_notes": operator_notes,
-        "answer_input_mode": answer_input_mode,
-        "camera_assist_enabled": camera_assist_enabled,
-        "camera_suggestions": camera_suggestions,
     }
+    if answer_input_mode != "manual_cli" or camera_assist_enabled:
+        record["answer_input_mode"] = answer_input_mode
+    if camera_assist_enabled:
+        record["camera_assist_enabled"] = True
+        record["camera_suggestions"] = camera_suggestions or []
+    return record
 
 
 def build_camera_suggestion(
@@ -510,6 +513,50 @@ def _collect_multiline(input_fn) -> str:
     return "\n".join(lines)
 
 
+def _review_camera_suggestions(
+    camera_suggestions: list[dict],
+    input_fn,
+    print_fn,
+) -> tuple[list[dict], list[str], str]:
+    """Let the operator accept camera suggestions before choosing the follow-up."""
+    if not camera_suggestions:
+        return [], [], ""
+
+    reviewed: list[dict] = []
+    accepted_signals: list[str] = []
+    first_probe = ""
+    print_fn("\n摄像头辅助建议：")
+    for index, suggestion in enumerate(camera_suggestions, start=1):
+        item = dict(suggestion)
+        signal = str(item.get("signal", "")).strip()
+        suggested_probe = str(item.get("suggested_probe", "")).strip()
+        print_fn(
+            f"[{index}] signal={signal} confidence={item.get('confidence', '')} "
+            f"reason={item.get('reason', '')}"
+        )
+        if suggested_probe:
+            print_fn(f"建议追问：{suggested_probe}")
+        print_fn("是否采用该摄像头建议？(y=采用 / n=不采用 / modify=修改追问)")
+        choice = input_fn("").strip().lower()
+        if choice == "y":
+            item["accepted"] = True
+            item["final_probe"] = suggested_probe
+        elif choice == "modify":
+            item["accepted"] = True
+            item["final_probe"] = input_fn("").strip()
+        else:
+            item["accepted"] = False
+            item["final_probe"] = item.get("final_probe", "")
+
+        if item["accepted"]:
+            if signal and signal not in accepted_signals:
+                accepted_signals.append(signal)
+            if not first_probe:
+                first_probe = str(item.get("final_probe", "")).strip()
+        reviewed.append(item)
+    return reviewed, accepted_signals, first_probe
+
+
 def run_one_layer(
     group: dict,
     layer: str,
@@ -548,9 +595,17 @@ def run_one_layer(
                 question=question,
                 expert_answer=expert_answer,
             ) or []
+    camera_signals: list[str] = []
+    camera_probe = ""
+    if camera_assist_enabled:
+        camera_suggestions, camera_signals, camera_probe = _review_camera_suggestions(
+            camera_suggestions,
+            input_fn,
+            print_fn,
+        )
 
     probes = question.get("probes", {})
-    primary_probe = probes.get("primary", "")
+    primary_probe = camera_probe or probes.get("primary", "")
     print_fn(f"\n推荐追问：{primary_probe}")
     followup_asked = primary_probe
     print_fn("(输入追问记录，直接回车跳过)")
@@ -559,13 +614,17 @@ def run_one_layer(
     print_fn("\n信号标注（空格分隔，直接回车跳过）：")
     print_fn("可选：noticed / hesitated / boundary_invented / contradiction / pushback / fuzzy_language")
     sig_input = input_fn("").strip()
-    signals = [s.strip() for s in sig_input.split() if s.strip()] if sig_input else []
+    manual_signals = [s.strip() for s in sig_input.split() if s.strip()] if sig_input else []
+    signals = list(camera_signals)
+    for signal in manual_signals:
+        if signal not in signals:
+            signals.append(signal)
 
-    probe_suggestion = ""
-    probe_adopted: bool | None = None
+    probe_suggestion = camera_probe
+    probe_adopted: bool | None = True if camera_probe else None
     probe_modified_text: str | None = None
 
-    if signals:
+    if signals and not probe_suggestion:
         suggestions = suggest_probe_for_signals(question, signals)
         if suggestions:
             for sig, text in suggestions.items():
@@ -599,7 +658,7 @@ def run_one_layer(
         operator_notes=operator_notes,
         answer_input_mode=answer_input_mode,
         camera_assist_enabled=camera_assist_enabled,
-        camera_suggestions=camera_suggestions if camera_assist_enabled else None,
+        camera_suggestions=camera_suggestions,
     )
 
 

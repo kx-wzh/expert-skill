@@ -87,6 +87,78 @@ def _is_camera_only_evidence(finding: dict) -> bool:
     )
 
 
+def _normalized_text(value) -> str:
+    return "".join(str(value or "").casefold().split())
+
+
+def _contains_quote(text, quote: str) -> bool:
+    normalized_quote = _normalized_text(quote)
+    if not normalized_quote:
+        return False
+    return normalized_quote in _normalized_text(text)
+
+
+def _evidence_records_for_finding(finding: dict, transcript: list[dict]) -> list[dict]:
+    evidence = finding.get("evidence", {})
+    triplet_id = evidence.get("triplet_id")
+    layer = evidence.get("layer")
+    records = [
+        r for r in transcript
+        if r.get("triplet_id") == triplet_id and r.get("question_layer") == layer
+    ]
+    if records:
+        return records
+    return [r for r in transcript if r.get("triplet_id") == triplet_id]
+
+
+def _quote_is_expert_text(quote: str, records: list[dict]) -> bool:
+    return any(
+        _contains_quote(record.get("expert_answer", ""), quote)
+        or _contains_quote(record.get("followup_answer", ""), quote)
+        for record in records
+    )
+
+
+def _quote_is_decision_evidence(quote: str) -> bool:
+    text = str(quote or "").casefold()
+    return any(
+        marker in text
+        for marker in ("a→b", "a->b", "b→c", "b->c", "a/b/c", "决策", "选择", "取舍", "decision")
+    )
+
+
+def _quote_matches_camera_suggestion_text(quote: str, records: list[dict]) -> bool:
+    normalized_quote = _normalized_text(quote)
+    if len(normalized_quote) < 4:
+        return False
+    for record in records:
+        for suggestion in record.get("camera_suggestions") or []:
+            if not isinstance(suggestion, dict):
+                continue
+            for field in ("reason", "suggested_probe", "final_probe"):
+                normalized_value = _normalized_text(suggestion.get(field, ""))
+                if normalized_value and (
+                    normalized_quote in normalized_value or normalized_value in normalized_quote
+                ):
+                    return True
+    return False
+
+
+def _is_ungrounded_camera_context_evidence(finding: dict, transcript: list[dict]) -> bool:
+    evidence = finding.get("evidence", {})
+    quote = str(evidence.get("expert_quote", "")).strip()
+    if not quote:
+        return False
+    records = _evidence_records_for_finding(finding, transcript)
+    if not any(record.get("camera_suggestions") for record in records):
+        return False
+    if _quote_is_expert_text(quote, records):
+        return False
+    if _quote_is_decision_evidence(quote) and not _quote_matches_camera_suggestion_text(quote, records):
+        return False
+    return True
+
+
 def check_p6_quality_gate(
     result: dict,
     transcript: list[dict],
@@ -158,7 +230,7 @@ def check_p6_quality_gate(
             ev = f.get("evidence", {})
             if not ev.get("expert_quote"):
                 errors.append(f"P6: 三联体 {tid} 的 finding 缺少 evidence.expert_quote")
-            if _is_camera_only_evidence(f):
+            if _is_camera_only_evidence(f) or _is_ungrounded_camera_context_evidence(f, transcript):
                 errors.append(f"P6: 三联体 {tid} 的 finding 包含 camera-only evidence")
         state = a.get("awareness_state", "")
         if state and state not in ("explicit", "semi_latent", "deep_latent"):

@@ -697,6 +697,44 @@ def test_p6_gate_rejects_camera_only_markers_in_expert_quote(expert_quote):
     assert any("camera-only evidence" in e for e in errors)
 
 
+def test_p6_gate_rejects_camera_suggestion_reason_copied_as_expert_quote():
+    camera_reason = "回答时有明显停顿"
+    camera_only_finding = {
+        "type": "变量",
+        "content": "仅由摄像头建议推断出的发现",
+        "confidence": "medium",
+        "evidence": {
+            "triplet_id": "tg_001",
+            "layer": "B",
+            "expert_quote": camera_reason,
+            "confidence_reason": "引用不是专家原话",
+        },
+    }
+    analysis = {**VALID_ANALYSIS_001, "latent_findings": [camera_only_finding]}
+    result = {**VALID_RESULT, "triplet_analyses": [analysis]}
+    transcript = [
+        {
+            "triplet_id": "tg_001",
+            "question_layer": "B",
+            "expert_answer": "我还没有明确答案",
+            "followup_answer": "",
+            "signals_observed": [],
+            "camera_suggestions": [
+                {
+                    "signal": "hesitated",
+                    "confidence": "medium",
+                    "reason": camera_reason,
+                    "suggested_probe": "你在衡量什么？",
+                    "accepted": False,
+                    "final_probe": "",
+                }
+            ],
+        }
+    ]
+    errors, _ = ia.check_p6_quality_gate(result, transcript, SAMPLE_GROUPS)
+    assert any("camera-only evidence" in e for e in errors)
+
+
 def test_p6_gate_allows_camera_triggered_finding_with_expert_quote():
     camera_triggered_finding = {
         "type": "变量",
