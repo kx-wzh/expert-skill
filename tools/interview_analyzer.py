@@ -69,8 +69,19 @@ def _is_camera_only_evidence(finding: dict) -> bool:
     reason = str(evidence.get("confidence_reason", "")).strip().lower()
     if not quote:
         return False
-    quote_markers = ("camera_suggestion", "camera_suggestions", "摄像头建议")
-    reason_only_markers = ("only camera", "camera-only", "仅凭摄像头")
+    quote_markers = (
+        "camera_suggestion",
+        "camera_suggestions",
+        "摄像头建议",
+        "only camera",
+        "camera-only",
+        "仅凭摄像头",
+    )
+    reason_only_markers = (
+        "only camera",
+        "camera-only",
+        "仅凭摄像头",
+    )
     return any(marker in quote for marker in quote_markers) or any(
         marker in reason for marker in reason_only_markers
     )

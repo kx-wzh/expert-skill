@@ -672,6 +672,31 @@ def test_p6_gate_rejects_camera_only_latent_finding_evidence():
     assert any("camera-only evidence" in e for e in errors)
 
 
+@pytest.mark.parametrize(
+    "expert_quote",
+    [
+        "camera-only evidence",
+        "仅凭摄像头判断",
+    ],
+)
+def test_p6_gate_rejects_camera_only_markers_in_expert_quote(expert_quote):
+    camera_only_finding = {
+        "type": "变量",
+        "content": "仅由摄像头建议推断出的发现",
+        "confidence": "medium",
+        "evidence": {
+            "triplet_id": "tg_001",
+            "layer": "B",
+            "expert_quote": expert_quote,
+            "confidence_reason": "引用不是专家原话",
+        },
+    }
+    analysis = {**VALID_ANALYSIS_001, "latent_findings": [camera_only_finding]}
+    result = {**VALID_RESULT, "triplet_analyses": [analysis]}
+    errors, _ = ia.check_p6_quality_gate(result, SAMPLE_TRANSCRIPT, SAMPLE_GROUPS)
+    assert any("camera-only evidence" in e for e in errors)
+
+
 def test_p6_gate_allows_camera_triggered_finding_with_expert_quote():
     camera_triggered_finding = {
         "type": "变量",
