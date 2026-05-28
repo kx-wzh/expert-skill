@@ -29,10 +29,10 @@ _VALID_CAMERA_CONFIDENCE = {"high", "medium", "low"}
 _VALID_ANSWER_INPUT_MODES = {"manual_cli", "streaming_text"}
 _CAMERA_TEMP_DIR = "/tmp/expert-skill-camera"
 _IMAGE_PATH_RE = re.compile(
-    r"(?:^|[\s\"'=(])"
-    r"(?:[A-Za-z]:[\\/]|/|\.{1,2}[\\/]|[^\s\"'=()]+[\\/])"
-    r"[^\s\"'=()]*\.(?:jpe?g|png|webp)"
-    r"(?=$|[\s\"'),，;；.。:：\]）])",
+    r"(?:^|[\s\"'`(<\[])"
+    r"(?:[A-Za-z]:[\\/]|/|\.{1,2}[\\/]|[^\s\"'`<>()\[\]]+[\\/])"
+    r"[^\s\"'`<>()\[\]]*\.(?:jpe?g|png|webp)"
+    r"(?=$|[^A-Za-z0-9_])",
     re.IGNORECASE,
 )
 
