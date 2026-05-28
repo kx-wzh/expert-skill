@@ -437,6 +437,17 @@ python tools/interview_session.py \
   --base-dir ./skills/expert
 ```
 
+摄像头辅助是可选能力，默认关闭。只有用户明确同意后，agent 才能使用：
+
+```bash
+python tools/interview_session.py \
+  --slug demo-expert \
+  --base-dir ./skills/expert \
+  --camera-assist
+```
+
+摄像头临时帧只用于当前 agent 的多模态分析，不写入 transcript；最终记录只保存结构化文字建议。
+
 #### 3. 只完成某一个三联体
 
 ```bash
