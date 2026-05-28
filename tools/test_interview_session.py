@@ -204,6 +204,54 @@ def test_probe_modified_text_recorded():
     assert record["probe_modified_text"] == "自定义追问文本"
 
 
+def test_run_one_layer_collects_camera_suggestions_from_worker():
+    responses = iter(["专家回答A", "/done", "追问回答A", "", ""])
+    events = []
+
+    class FakeWorker:
+        def start_answer(self, triplet_id, layer):
+            events.append(("start", triplet_id, layer))
+
+        def stop_answer(self):
+            events.append(("stop",))
+            return [
+                iss.build_camera_suggestion(
+                    signal="hesitated",
+                    confidence="medium",
+                    reason="回答期间有明显停顿",
+                    suggested_probe="你在衡量什么？",
+                )
+            ]
+
+    def input_fn(prompt=""):
+        value = next(responses)
+        events.append(("input", value))
+        return value
+
+    record = iss.run_one_layer(
+        SAMPLE_GROUP,
+        "A",
+        input_fn,
+        lambda x: None,
+        answer_input_mode="manual_cli",
+        camera_assist_enabled=True,
+        camera_assist_worker=FakeWorker(),
+    )
+
+    assert events == [
+        ("start", "tg_001", "A"),
+        ("input", "专家回答A"),
+        ("input", "/done"),
+        ("stop",),
+        ("input", "追问回答A"),
+        ("input", ""),
+        ("input", ""),
+    ]
+    assert record["expert_answer"] == "专家回答A"
+    assert record["camera_suggestions"][0]["signal"] == "hesitated"
+    assert record["camera_assist_enabled"] is True
+
+
 # ---------------------------------------------------------------------------
 # 7. test_breakpoint_written_after_each_layer
 # ---------------------------------------------------------------------------
