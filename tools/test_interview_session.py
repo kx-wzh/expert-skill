@@ -876,3 +876,68 @@ def test_p5_quality_gate_rejects_frame_paths_in_transcript():
     ])
     errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
     assert any("must not contain frame paths" in e for e in errors)
+
+
+def test_p5_quality_gate_rejects_invalid_answer_input_mode():
+    bad = _camera_record(answer_input_mode="voice_upload")
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("answer_input_mode" in e for e in errors)
+
+
+def test_p5_quality_gate_accepts_streaming_text_answer_input_mode():
+    record = _camera_record(answer_input_mode="streaming_text")
+    errors = iss.check_p5_quality_gate(_complete_camera_records(record))
+    assert errors == []
+
+
+def test_p5_quality_gate_rejects_non_list_camera_suggestions():
+    bad = _camera_record(camera_suggestions={"signal": "hesitated"})
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("camera_suggestions must be list" in e for e in errors)
+
+
+def test_p5_quality_gate_rejects_non_dict_camera_suggestion_entries():
+    bad = _camera_record(camera_suggestions=["hesitated"])
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("camera_suggestions[0] must be dict" in e for e in errors)
+
+
+def test_p5_quality_gate_rejects_non_string_suggested_probe():
+    bad = _camera_record(camera_suggestions=[
+        {
+            "signal": "hesitated",
+            "confidence": "medium",
+            "reason": "建议追问必须是字符串",
+            "suggested_probe": ["你在衡量什么？"],
+            "accepted": False,
+            "final_probe": "",
+        }
+    ])
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("camera_suggestions[0].suggested_probe" in e for e in errors)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "frame_path",
+        "/tmp/expert-skill-camera",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+    ],
+)
+def test_p5_quality_gate_rejects_all_camera_frame_reference_markers(marker):
+    bad = _camera_record(camera_suggestions=[
+        {
+            "signal": "hesitated",
+            "confidence": "medium",
+            "reason": f"contains forbidden marker {marker}",
+            "suggested_probe": "你在衡量什么？",
+            "accepted": True,
+            "final_probe": "你在衡量什么？",
+        }
+    ])
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("must not contain frame paths" in e for e in errors)
