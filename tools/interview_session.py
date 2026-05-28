@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -26,13 +27,13 @@ _VALID_CAMERA_SIGNALS = {
 }
 _VALID_CAMERA_CONFIDENCE = {"high", "medium", "low"}
 _VALID_ANSWER_INPUT_MODES = {"manual_cli", "streaming_text"}
-_FRAME_REFERENCE_MARKERS = (
-    "frame_path",
-    "/tmp/expert-skill-camera",
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
+_CAMERA_TEMP_DIR = "/tmp/expert-skill-camera"
+_IMAGE_PATH_RE = re.compile(
+    r"(?:^|[\s\"'=(])"
+    r"(?:[A-Za-z]:[\\/]|/|\.{1,2}[\\/]|[^\s\"'=()]+[\\/])"
+    r"[^\s\"'=()]*\.(?:jpe?g|png|webp)"
+    r"(?=$|[\s\"')])",
+    re.IGNORECASE,
 )
 
 
@@ -139,10 +140,12 @@ def write_breakpoint(
 
 def _contains_frame_reference(value) -> bool:
     if isinstance(value, str):
-        return any(marker in value for marker in _FRAME_REFERENCE_MARKERS)
+        return _CAMERA_TEMP_DIR in value or _IMAGE_PATH_RE.search(value) is not None
     if isinstance(value, dict):
         return any(
-            _contains_frame_reference(k) or _contains_frame_reference(v)
+            k == "frame_path"
+            or _contains_frame_reference(k)
+            or _contains_frame_reference(v)
             for k, v in value.items()
         )
     if isinstance(value, list):

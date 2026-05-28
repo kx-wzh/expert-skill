@@ -878,6 +878,12 @@ def test_p5_quality_gate_rejects_frame_paths_in_transcript():
     assert any("must not contain frame paths" in e for e in errors)
 
 
+def test_p5_quality_gate_allows_png_format_mentioned_in_expert_answer():
+    record = _camera_record(expert_answer="导出 .png 格式用于验收")
+    errors = iss.check_p5_quality_gate(_complete_camera_records(record))
+    assert errors == []
+
+
 def test_p5_quality_gate_rejects_invalid_answer_input_mode():
     bad = _camera_record(answer_input_mode="voice_upload")
     errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
@@ -918,25 +924,40 @@ def test_p5_quality_gate_rejects_non_string_suggested_probe():
 
 
 @pytest.mark.parametrize(
-    "marker",
+    "frame_reference",
     [
-        "frame_path",
         "/tmp/expert-skill-camera",
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".webp",
+        "/tmp/foo/frame-001.jpg",
+        "C:\\tmp\\frame.png",
+        "tmp/frame.webp",
+        "sess/frame-001.jpeg",
     ],
 )
-def test_p5_quality_gate_rejects_all_camera_frame_reference_markers(marker):
+def test_p5_quality_gate_rejects_camera_frame_reference_paths(frame_reference):
     bad = _camera_record(camera_suggestions=[
         {
             "signal": "hesitated",
             "confidence": "medium",
-            "reason": f"contains forbidden marker {marker}",
+            "reason": f"contains forbidden frame reference {frame_reference}",
             "suggested_probe": "你在衡量什么？",
             "accepted": True,
             "final_probe": "你在衡量什么？",
+        }
+    ])
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("must not contain frame paths" in e for e in errors)
+
+
+def test_p5_quality_gate_rejects_nested_frame_path_key():
+    bad = _camera_record(camera_suggestions=[
+        {
+            "signal": "hesitated",
+            "confidence": "medium",
+            "reason": "nested metadata must not carry frame references",
+            "suggested_probe": "你在衡量什么？",
+            "accepted": True,
+            "final_probe": "你在衡量什么？",
+            "evidence": {"frame_path": "redacted"},
         }
     ])
     errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
