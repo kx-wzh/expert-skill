@@ -1036,3 +1036,38 @@ def test_transcript_md_redacts_camera_suggestion_frame_references():
     assert ".jpg" not in md
     assert "frame_path" not in md
     assert "/tmp/expert-skill-camera" not in md
+
+
+def test_transcript_md_redacts_punctuated_camera_frame_references():
+    record = iss.build_interview_record(
+        triplet_id="tg_001",
+        target_variable="lv_001",
+        layer="A",
+        question_text="A题目",
+        expert_answer="回答A",
+        followup_asked="你在衡量什么？",
+        followup_answer="我在看边界条件",
+        signals_observed=["hesitated"],
+        probe_suggestion="你在衡量什么？",
+        probe_adopted=True,
+        probe_modified_text=None,
+        operator_notes="",
+        answer_input_mode="manual_cli",
+        camera_assist_enabled=True,
+        camera_suggestions=[
+            iss.build_camera_suggestion(
+                signal="hesitated",
+                confidence="medium",
+                reason="查看 sess/frame-001.jpg，后追问；查看 /tmp/foo/frame-001.jpg, then",
+                suggested_probe="你在衡量什么？",
+                accepted=True,
+                final_probe="你在衡量什么？",
+            )
+        ],
+    )
+    md = iss.generate_transcript_md([record], [SAMPLE_GROUP])
+    assert "已移除临时帧引用" in md
+    assert "sess/frame-001.jpg" not in md
+    assert "/tmp/foo/frame-001.jpg" not in md
+    assert ".jpg" not in md
+    assert "frame_path" not in md
