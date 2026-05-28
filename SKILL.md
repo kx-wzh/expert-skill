@@ -360,13 +360,44 @@ python3 tools/triplet_generator.py \
 
 ### P5：实时访谈记录
 
-按 A→B→C 协议进行结构化访谈并记录：
+按 A→B→C 协议进行结构化访谈并记录。P5 开始前，agent 必须询问用户是否开启摄像头辅助；默认不启用摄像头，只有用户明确同意后，才可以调用本机摄像头。
+
+必须使用以下同意文本：
+
+```text
+P5 访谈可以选择开启摄像头辅助。开启后，访谈过程中会调用本机摄像头，在专家回答期间定时采集临时帧，并由当前 agent 的多模态模型分析非语言信号，用于提示可能的追问。临时图片只用于实时分析，不保存到 skill 目录或 transcript。是否开启？
+```
+
+默认访谈命令：
 
 ```bash
 python3 tools/interview_session.py \
   --slug {slug} \
   --base-dir ./skills/expert
+```
 
+开启摄像头辅助：
+
+```bash
+python3 tools/interview_session.py \
+  --slug {slug} \
+  --base-dir ./skills/expert \
+  --camera-assist
+```
+
+开启摄像头辅助并使用流式回答输入：
+
+```bash
+python3 tools/interview_session.py \
+  --slug {slug} \
+  --base-dir ./skills/expert \
+  --camera-assist \
+  --answer-input stream
+```
+
+摄像头辅助只生成候选追问信号；`signals_observed` 仍然只记录已确认信号，P6 不能仅依据摄像头建议生成隐性知识发现。
+
+```bash
 # 中断后恢复：
 python3 tools/interview_session.py \
   --slug {slug} \
