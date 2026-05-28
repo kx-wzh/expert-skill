@@ -12,6 +12,9 @@ import argparse
 import json
 import re
 import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -104,6 +107,200 @@ def build_camera_suggestion(
         "accepted": accepted,
         "final_probe": final_probe,
     }
+
+
+def build_camera_frame_event(
+    session_id: str,
+    frame_id: str,
+    frame_path,
+    response_path,
+    triplet_id: str,
+    layer: str,
+) -> dict:
+    """Build the file-based camera analysis event emitted to an external agent."""
+    return {
+        "event": "camera_frame_ready",
+        "session_id": session_id,
+        "frame_id": frame_id,
+        "frame_path": str(frame_path),
+        "response_path": str(response_path),
+        "triplet_id": triplet_id,
+        "question_layer": layer,
+        "instruction": (
+            "Inspect the frame for expert interview signals. "
+            "Return JSON only as an array of objects with signal, confidence, "
+            "reason, and suggested_probe."
+        ),
+    }
+
+
+def parse_camera_response_file(response_path) -> tuple[list[dict], list[str]]:
+    """Parse agent-written camera response JSON into normalized suggestions."""
+    path = Path(response_path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [], [f"camera response invalid JSON: {exc}"]
+    except OSError as exc:
+        return [], [f"camera response read failed: {exc}"]
+
+    if not isinstance(data, list):
+        return [], ["camera response must be a JSON array"]
+
+    suggestions: list[dict] = []
+    errors: list[str] = []
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"camera response item {index} must be object")
+            continue
+
+        missing_or_invalid = [
+            field
+            for field in ("signal", "confidence", "reason", "suggested_probe")
+            if not isinstance(item.get(field), str)
+        ]
+        if missing_or_invalid:
+            errors.append(
+                f"camera response item {index} has invalid fields: "
+                f"{', '.join(missing_or_invalid)}"
+            )
+            continue
+
+        suggestion = build_camera_suggestion(
+            signal=item["signal"],
+            confidence=item["confidence"],
+            reason=item["reason"],
+            suggested_probe=item["suggested_probe"],
+            accepted=False,
+            final_probe="",
+        )
+        validation_errors = validate_camera_suggestions({
+            "triplet_id": "camera_response",
+            "question_layer": "?",
+            "signals_observed": [],
+            "camera_suggestions": [suggestion],
+        })
+        if validation_errors:
+            errors.extend(f"camera response item {index}: {e}" for e in validation_errors)
+            continue
+        suggestions.append(suggestion)
+
+    return suggestions, errors
+
+
+def capture_camera_frame(frame_path, camera_index: int = 0) -> tuple[bool, str]:
+    """Capture one camera frame to `frame_path` using OpenCV when available."""
+    try:
+        import cv2
+    except ImportError:
+        return False, "OpenCV/cv2 is not installed; camera assist disabled"
+
+    capture = cv2.VideoCapture(camera_index)
+    try:
+        if not capture.isOpened():
+            return False, f"camera index {camera_index} is not available"
+        ok, frame = capture.read()
+        if not ok:
+            return False, f"failed to read frame from camera index {camera_index}"
+        Path(frame_path).parent.mkdir(parents=True, exist_ok=True)
+        if not cv2.imwrite(str(frame_path), frame):
+            return False, f"failed to write camera frame: {frame_path}"
+        return True, ""
+    finally:
+        capture.release()
+
+
+class CameraAssistWorker:
+    """File-based camera assist worker with injectable capture for tests."""
+
+    def __init__(
+        self,
+        temp_root,
+        frame_interval: float,
+        analysis_timeout: float,
+        print_fn,
+        capture_frame_fn=None,
+        session_id: str | None = None,
+        response_dir=None,
+    ) -> None:
+        self.temp_root = Path(temp_root)
+        self.frame_interval = frame_interval
+        self.analysis_timeout = analysis_timeout
+        self.print_fn = print_fn
+        self.capture_frame_fn = capture_frame_fn or capture_camera_frame
+        self.session_id = session_id or f"sess-{uuid.uuid4().hex}"
+        self.response_dir = Path(response_dir) if response_dir is not None else self.temp_root / "responses"
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._suggestions: list[dict] = []
+        self._lock = threading.Lock()
+
+    def capture_once(self, triplet_id: str, layer: str) -> list[dict]:
+        self.temp_root.mkdir(parents=True, exist_ok=True)
+        self.response_dir.mkdir(parents=True, exist_ok=True)
+        frame_id = f"frame-{uuid.uuid4().hex}"
+        frame_path = self.temp_root / f"{frame_id}.jpg"
+        response_path = self.response_dir / f"{frame_id}.json"
+
+        try:
+            ok, message = self.capture_frame_fn(frame_path)
+            if not ok:
+                if message:
+                    self.print_fn(message)
+                return []
+
+            event = build_camera_frame_event(
+                session_id=self.session_id,
+                frame_id=frame_id,
+                frame_path=frame_path,
+                response_path=response_path,
+                triplet_id=triplet_id,
+                layer=layer,
+            )
+            self.print_fn(json.dumps(event, ensure_ascii=False))
+
+            deadline = time.monotonic() + self.analysis_timeout
+            while time.monotonic() < deadline:
+                if response_path.exists():
+                    suggestions, errors = parse_camera_response_file(response_path)
+                    for error in errors:
+                        self.print_fn(error)
+                    return suggestions
+                time.sleep(min(0.01, max(self.analysis_timeout, 0.01)))
+            self.print_fn(f"camera response timed out: {response_path}")
+            return []
+        finally:
+            try:
+                frame_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                self.print_fn(f"camera frame cleanup failed: {exc}")
+
+    def start_answer(self, triplet_id: str, layer: str) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._suggestions = []
+
+        def _loop() -> None:
+            while not self._stop_event.is_set():
+                suggestions = self.capture_once(triplet_id, layer)
+                if suggestions:
+                    with self._lock:
+                        self._suggestions.extend(suggestions)
+                self._stop_event.wait(self.frame_interval)
+
+        self._thread = threading.Thread(target=_loop, daemon=True)
+        self._thread.start()
+
+    def stop_answer(self) -> list[dict]:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(self.analysis_timeout, 0.1) + 1.0)
+            self._thread = None
+        with self._lock:
+            return list(self._suggestions)
 
 
 def normalize_answer_input_mode(raw_mode) -> str:

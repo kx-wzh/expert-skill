@@ -3,6 +3,7 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -1162,3 +1163,121 @@ def test_stream_answer_input_sets_streaming_text_mode(tmp_path):
     assert ret == 0
     transcript = json.loads((discovery / "interview_transcript.json").read_text(encoding="utf-8"))
     assert all(record["answer_input_mode"] == "streaming_text" for record in transcript)
+
+
+def test_build_camera_frame_event_contains_response_path_without_persisting_to_transcript(tmp_path):
+    event = iss.build_camera_frame_event(
+        session_id="sess-001",
+        frame_id="frame-001",
+        frame_path=tmp_path / "frame-001.jpg",
+        response_path=tmp_path / "responses" / "frame-001.json",
+        triplet_id="tg_001",
+        layer="A",
+    )
+    assert event["event"] == "camera_frame_ready"
+    assert event["triplet_id"] == "tg_001"
+    assert event["question_layer"] == "A"
+    assert str(event["frame_path"]).endswith("frame-001.jpg")
+    assert str(event["response_path"]).endswith("frame-001.json")
+    assert "Return JSON only" in event["instruction"]
+
+
+def test_parse_camera_response_accepts_json_array(tmp_path):
+    response_path = tmp_path / "frame-001.json"
+    response_path.write_text(
+        json.dumps([
+            {
+                "signal": "hesitated",
+                "confidence": "medium",
+                "reason": "回答时有明显停顿",
+                "suggested_probe": "你在衡量什么？",
+            }
+        ], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    suggestions, errors = iss.parse_camera_response_file(response_path)
+    assert errors == []
+    assert suggestions[0]["signal"] == "hesitated"
+    assert suggestions[0]["accepted"] is False
+
+
+def test_parse_camera_response_rejects_invalid_json(tmp_path):
+    response_path = tmp_path / "frame-001.json"
+    response_path.write_text("not json", encoding="utf-8")
+    suggestions, errors = iss.parse_camera_response_file(response_path)
+    assert suggestions == []
+    assert any("invalid JSON" in e for e in errors)
+
+
+def test_camera_assist_worker_uses_fake_capture_and_deletes_frame(tmp_path):
+    printed = []
+    responses = tmp_path / "responses"
+    responses.mkdir()
+
+    def fake_capture(path):
+        Path(path).write_bytes(b"fake image")
+        frame_id = Path(path).stem
+        (responses / f"{frame_id}.json").write_text(
+            json.dumps([
+                {
+                    "signal": "hesitated",
+                    "confidence": "medium",
+                    "reason": "回答时有明显停顿",
+                    "suggested_probe": "你在衡量什么？",
+                }
+            ], ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return True, ""
+
+    worker = iss.CameraAssistWorker(
+        temp_root=tmp_path,
+        frame_interval=0.01,
+        analysis_timeout=0.2,
+        print_fn=printed.append,
+        capture_frame_fn=fake_capture,
+        session_id="sess-test",
+        response_dir=responses,
+    )
+    suggestions = worker.capture_once("tg_001", "A")
+    assert suggestions[0]["signal"] == "hesitated"
+    assert "camera_frame_ready" in "\n".join(printed)
+    assert not any(path.suffix == ".jpg" for path in tmp_path.rglob("*"))
+
+
+def test_camera_assist_worker_captures_during_answer_until_stopped(tmp_path):
+    capture_count = {"value": 0}
+    responses = tmp_path / "responses"
+    responses.mkdir()
+
+    def fake_capture(path):
+        capture_count["value"] += 1
+        Path(path).write_bytes(b"fake image")
+        frame_id = Path(path).stem
+        (responses / f"{frame_id}.json").write_text(
+            json.dumps([
+                {
+                    "signal": "hesitated",
+                    "confidence": "low",
+                    "reason": "回答期间出现短暂停顿",
+                    "suggested_probe": "你在衡量什么？",
+                }
+            ], ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return True, ""
+
+    worker = iss.CameraAssistWorker(
+        temp_root=tmp_path,
+        frame_interval=0.01,
+        analysis_timeout=0.05,
+        print_fn=lambda x: None,
+        capture_frame_fn=fake_capture,
+        session_id="sess-loop",
+        response_dir=responses,
+    )
+    worker.start_answer("tg_001", "A")
+    time.sleep(0.04)
+    suggestions = worker.stop_answer()
+    assert capture_count["value"] >= 2
+    assert any(item["signal"] == "hesitated" for item in suggestions)
