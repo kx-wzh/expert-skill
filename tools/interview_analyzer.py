@@ -63,6 +63,19 @@ def check_triplet_analysis_schema(analysis: dict) -> list[str]:
 # P6 quality gate
 # ---------------------------------------------------------------------------
 
+def _is_camera_only_evidence(finding: dict) -> bool:
+    evidence = finding.get("evidence", {})
+    quote = str(evidence.get("expert_quote", "")).strip().lower()
+    reason = str(evidence.get("confidence_reason", "")).strip().lower()
+    if not quote:
+        return False
+    quote_markers = ("camera_suggestion", "camera_suggestions", "摄像头建议")
+    reason_only_markers = ("only camera", "camera-only", "仅凭摄像头")
+    return any(marker in quote for marker in quote_markers) or any(
+        marker in reason for marker in reason_only_markers
+    )
+
+
 def check_p6_quality_gate(
     result: dict,
     transcript: list[dict],
@@ -134,6 +147,8 @@ def check_p6_quality_gate(
             ev = f.get("evidence", {})
             if not ev.get("expert_quote"):
                 errors.append(f"P6: 三联体 {tid} 的 finding 缺少 evidence.expert_quote")
+            if _is_camera_only_evidence(f):
+                errors.append(f"P6: 三联体 {tid} 的 finding 包含 camera-only evidence")
         state = a.get("awareness_state", "")
         if state and state not in ("explicit", "semi_latent", "deep_latent"):
             errors.append(f"P6: 三联体 {tid} 的 awareness_state 非法值 '{state}'")

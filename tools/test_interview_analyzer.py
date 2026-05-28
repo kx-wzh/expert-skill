@@ -634,3 +634,82 @@ def test_analysis_parse_sets_analysis_ready_status(tmp_path):
     assert ret == 0
     meta = json.loads((base / "expert_a" / "meta.json").read_text(encoding="utf-8"))
     assert meta["discovery"]["status"] == "analysis_ready"
+
+
+def test_p6_gate_rejects_camera_only_latent_finding_evidence():
+    camera_only_finding = {
+        "type": "变量",
+        "content": "仅由摄像头建议推断出的发现",
+        "confidence": "medium",
+        "evidence": {
+            "triplet_id": "tg_001",
+            "layer": "B",
+            "expert_quote": "camera_suggestion: hesitated",
+            "confidence_reason": "Only camera_suggestions indicated hesitation",
+        },
+    }
+    analysis = {**VALID_ANALYSIS_001, "latent_findings": [camera_only_finding]}
+    result = {**VALID_RESULT, "triplet_analyses": [analysis]}
+    transcript = [
+        {
+            "triplet_id": "tg_001",
+            "question_layer": "B",
+            "expert_answer": "我还没有明确答案",
+            "signals_observed": [],
+            "camera_suggestions": [
+                {
+                    "signal": "hesitated",
+                    "confidence": "medium",
+                    "reason": "回答时有明显停顿",
+                    "suggested_probe": "你在衡量什么？",
+                    "accepted": False,
+                    "final_probe": "",
+                }
+            ],
+        }
+    ]
+    errors, _ = ia.check_p6_quality_gate(result, transcript, SAMPLE_GROUPS)
+    assert any("camera-only evidence" in e for e in errors)
+
+
+def test_p6_gate_allows_camera_triggered_finding_with_expert_quote():
+    camera_triggered_finding = {
+        "type": "变量",
+        "content": "专家用边界条件解释了迟疑",
+        "confidence": "medium",
+        "evidence": {
+            "triplet_id": "tg_001",
+            "layer": "B",
+            "expert_quote": "我在衡量患者最近是否有低血糖，因为这会改变建议",
+            "confidence_reason": "camera_suggestions triggered the follow-up, but the finding is grounded in expert_quote",
+        },
+    }
+    analysis = {**VALID_ANALYSIS_001, "latent_findings": [camera_triggered_finding]}
+    result = {**VALID_RESULT, "triplet_analyses": [analysis]}
+    transcript = [
+        {
+            "triplet_id": "tg_001",
+            "question_layer": "B",
+            "expert_answer": "我在衡量患者最近是否有低血糖，因为这会改变建议",
+            "signals_observed": ["hesitated"],
+            "camera_suggestions": [
+                {
+                    "signal": "hesitated",
+                    "confidence": "medium",
+                    "reason": "回答时有明显停顿",
+                    "suggested_probe": "你在衡量什么？",
+                    "accepted": True,
+                    "final_probe": "你在衡量什么？",
+                }
+            ],
+        }
+    ]
+    errors, _ = ia.check_p6_quality_gate(result, transcript, SAMPLE_GROUPS)
+    assert not any("camera-only evidence" in e for e in errors)
+
+
+def test_interview_analyzer_prompt_mentions_camera_suggestions_are_auxiliary():
+    prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "discovery" / "interview_analyzer.md"
+    text = prompt_path.read_text(encoding="utf-8")
+    assert "camera_suggestions" in text
+    assert "不能仅凭摄像头建议生成隐性知识发现" in text

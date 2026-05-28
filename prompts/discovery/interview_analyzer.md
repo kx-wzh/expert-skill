@@ -23,6 +23,12 @@
 {interview_transcript_json}
 ```
 
+### 摄像头辅助建议
+
+访谈记录中可能包含 `camera_suggestions`。这些字段来自可选摄像头辅助，只能作为追问触发线索或分析注意力提示。
+
+你可以说明某个追问是由摄像头辅助建议触发的，但不能仅凭摄像头建议生成隐性知识发现。每个 `latent_findings[*].evidence.expert_quote` 必须引用专家原话、追问回答或 A/B/C 决策行为，不能写成 `camera_suggestion`、`摄像头建议` 或其他非专家原话。
+
 ---
 
 ## 单三联体分析要求
@@ -133,3 +139,4 @@
 - 被证伪候选必须出现在 `invalidated_candidates`，不得静默丢弃
 - `cross_analysis.boundary_map` 必须覆盖所有含 `boundary_invented` 信号的三联体
 - `report_sections.open_questions` 必须列出未能确认或证伪的候选变量
+- 如果访谈记录包含 `camera_suggestions`，只能作为辅助上下文；不能仅凭摄像头建议生成隐性知识发现
