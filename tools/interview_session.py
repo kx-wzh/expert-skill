@@ -453,6 +453,21 @@ def generate_transcript_md(records: list[dict], groups: list[dict]) -> str:
                 if r.get("probe_modified_text"):
                     adopted_str += f"（修改为：{r['probe_modified_text']}）"
                 lines += [f"**采用情况**：{adopted_str}", ""]
+            camera_suggestions = r.get("camera_suggestions", [])
+            if camera_suggestions:
+                lines += ["**摄像头辅助建议**：", ""]
+                for suggestion in camera_suggestions:
+                    signal = suggestion.get("signal", "")
+                    confidence = suggestion.get("confidence", "")
+                    reason = suggestion.get("reason", "")
+                    suggested_probe = suggestion.get("suggested_probe", "")
+                    accepted = "已采纳" if suggestion.get("accepted") else "未采纳"
+                    final_probe = suggestion.get("final_probe", "")
+                    line = f"- [{confidence}] {signal}：{reason}；建议追问：{suggested_probe}；{accepted}"
+                    if final_probe:
+                        line += f"；实际追问：{final_probe}"
+                    lines.append(line)
+                lines.append("")
             if r.get("operator_notes"):
                 lines += [f"**操作者备注**：{r['operator_notes']}", ""]
             lines.append("")

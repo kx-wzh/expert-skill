@@ -962,3 +962,38 @@ def test_p5_quality_gate_rejects_nested_frame_path_key():
     ])
     errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
     assert any("must not contain frame paths" in e for e in errors)
+
+
+def test_transcript_md_renders_camera_suggestions_without_frame_paths():
+    record = iss.build_interview_record(
+        triplet_id="tg_001",
+        target_variable="lv_001",
+        layer="A",
+        question_text="A题目",
+        expert_answer="回答A",
+        followup_asked="你在衡量什么？",
+        followup_answer="我在看边界条件",
+        signals_observed=["hesitated"],
+        probe_suggestion="你在衡量什么？",
+        probe_adopted=True,
+        probe_modified_text=None,
+        operator_notes="",
+        answer_input_mode="manual_cli",
+        camera_assist_enabled=True,
+        camera_suggestions=[
+            iss.build_camera_suggestion(
+                signal="hesitated",
+                confidence="medium",
+                reason="回答前有明显停顿",
+                suggested_probe="你在衡量什么？",
+                accepted=True,
+                final_probe="你在衡量什么？",
+            )
+        ],
+    )
+    md = iss.generate_transcript_md([record], [SAMPLE_GROUP])
+    assert "**摄像头辅助建议**" in md
+    assert "hesitated" in md
+    assert "回答前有明显停顿" in md
+    assert ".jpg" not in md
+    assert "frame_path" not in md
