@@ -153,6 +153,12 @@ def _contains_frame_reference(value) -> bool:
     return False
 
 
+def _redact_frame_references_for_md(value: str) -> str:
+    if "frame_path" in value or _contains_frame_reference(value):
+        return "已移除临时帧引用"
+    return value
+
+
 def validate_camera_suggestions(record: dict) -> list[str]:
     """Validate camera assistance fields for a single transcript record."""
     errors: list[str] = []
@@ -457,12 +463,12 @@ def generate_transcript_md(records: list[dict], groups: list[dict]) -> str:
             if camera_suggestions:
                 lines += ["**摄像头辅助建议**：", ""]
                 for suggestion in camera_suggestions:
-                    signal = suggestion.get("signal", "")
-                    confidence = suggestion.get("confidence", "")
-                    reason = suggestion.get("reason", "")
-                    suggested_probe = suggestion.get("suggested_probe", "")
+                    signal = _redact_frame_references_for_md(suggestion.get("signal", ""))
+                    confidence = _redact_frame_references_for_md(suggestion.get("confidence", ""))
+                    reason = _redact_frame_references_for_md(suggestion.get("reason", ""))
+                    suggested_probe = _redact_frame_references_for_md(suggestion.get("suggested_probe", ""))
                     accepted = "已采纳" if suggestion.get("accepted") else "未采纳"
-                    final_probe = suggestion.get("final_probe", "")
+                    final_probe = _redact_frame_references_for_md(suggestion.get("final_probe", ""))
                     line = f"- [{confidence}] {signal}：{reason}；建议追问：{suggested_probe}；{accepted}"
                     if final_probe:
                         line += f"；实际追问：{final_probe}"

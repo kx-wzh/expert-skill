@@ -994,6 +994,45 @@ def test_transcript_md_renders_camera_suggestions_without_frame_paths():
     md = iss.generate_transcript_md([record], [SAMPLE_GROUP])
     assert "**摄像头辅助建议**" in md
     assert "hesitated" in md
+    assert "medium" in md
     assert "回答前有明显停顿" in md
+    assert "建议追问：你在衡量什么？" in md
+    assert "已采纳" in md
+    assert "实际追问：你在衡量什么？" in md
+    assert "- [medium] hesitated：回答前有明显停顿；建议追问：你在衡量什么？；已采纳；实际追问：你在衡量什么？" in md
     assert ".jpg" not in md
     assert "frame_path" not in md
+
+
+def test_transcript_md_redacts_camera_suggestion_frame_references():
+    record = iss.build_interview_record(
+        triplet_id="tg_001",
+        target_variable="lv_001",
+        layer="A",
+        question_text="A题目",
+        expert_answer="回答A",
+        followup_asked="你在衡量什么？",
+        followup_answer="我在看边界条件",
+        signals_observed=["hesitated"],
+        probe_suggestion="你在衡量什么？",
+        probe_adopted=True,
+        probe_modified_text=None,
+        operator_notes="",
+        answer_input_mode="manual_cli",
+        camera_assist_enabled=True,
+        camera_suggestions=[
+            iss.build_camera_suggestion(
+                signal="hesitated",
+                confidence="medium",
+                reason="frame_path=/tmp/expert-skill-camera/sess/frame-001.jpg",
+                suggested_probe="参考 /tmp/expert-skill-camera/sess/frame-001.jpg 后追问",
+                accepted=True,
+                final_probe="查看 sess/frame-001.jpg 后实际追问",
+            )
+        ],
+    )
+    md = iss.generate_transcript_md([record], [SAMPLE_GROUP])
+    assert "已移除临时帧引用" in md
+    assert ".jpg" not in md
+    assert "frame_path" not in md
+    assert "/tmp/expert-skill-camera" not in md
