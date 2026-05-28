@@ -16,6 +16,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 _FUZZY_LANGUAGE_DEFAULT_PROBE = "你感觉的线索是什么？"
+_VALID_CAMERA_SIGNALS = {
+    "noticed",
+    "hesitated",
+    "boundary_invented",
+    "contradiction",
+    "pushback",
+    "fuzzy_language",
+}
+_VALID_CAMERA_CONFIDENCE = {"high", "medium", "low"}
+_VALID_ANSWER_INPUT_MODES = {"manual_cli", "streaming_text"}
+_FRAME_REFERENCE_MARKERS = (
+    "frame_path",
+    "/tmp/expert-skill-camera",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +62,9 @@ def build_interview_record(
     probe_adopted: bool | None,
     probe_modified_text: str | None,
     operator_notes: str,
+    answer_input_mode: str = "manual_cli",
+    camera_assist_enabled: bool = False,
+    camera_suggestions: list[dict] | None = None,
 ) -> dict:
     """Build a single interview record dict."""
     return {
@@ -59,6 +80,28 @@ def build_interview_record(
         "probe_adopted": probe_adopted,
         "probe_modified_text": probe_modified_text,
         "operator_notes": operator_notes,
+        "answer_input_mode": answer_input_mode,
+        "camera_assist_enabled": camera_assist_enabled,
+        "camera_suggestions": camera_suggestions,
+    }
+
+
+def build_camera_suggestion(
+    signal: str,
+    confidence: str,
+    reason: str,
+    suggested_probe: str,
+    accepted: bool = False,
+    final_probe: str = "",
+) -> dict:
+    """Build a camera-assisted probe suggestion dict."""
+    return {
+        "signal": signal,
+        "confidence": confidence,
+        "reason": reason,
+        "suggested_probe": suggested_probe,
+        "accepted": accepted,
+        "final_probe": final_probe,
     }
 
 
@@ -94,6 +137,73 @@ def write_breakpoint(
     )
 
 
+def _contains_frame_reference(value) -> bool:
+    if isinstance(value, str):
+        return any(marker in value for marker in _FRAME_REFERENCE_MARKERS)
+    if isinstance(value, dict):
+        return any(
+            _contains_frame_reference(k) or _contains_frame_reference(v)
+            for k, v in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_frame_reference(item) for item in value)
+    return False
+
+
+def validate_camera_suggestions(record: dict) -> list[str]:
+    """Validate camera assistance fields for a single transcript record."""
+    errors: list[str] = []
+    tid = record.get("triplet_id", "?")
+    layer = record.get("question_layer", "?")
+
+    answer_input_mode = record.get("answer_input_mode")
+    if answer_input_mode is not None and answer_input_mode not in _VALID_ANSWER_INPUT_MODES:
+        errors.append(
+            f"P5: 三联体 {tid} {layer} 层 answer_input_mode 非法：{answer_input_mode}"
+        )
+
+    camera_suggestions = record.get("camera_suggestions")
+    if camera_suggestions is not None and not isinstance(camera_suggestions, list):
+        errors.append(f"P5: 三联体 {tid} {layer} 层 camera_suggestions must be list")
+        camera_suggestions = []
+    elif camera_suggestions is None:
+        camera_suggestions = []
+
+    signals_observed = set(record.get("signals_observed", []))
+    for index, suggestion in enumerate(camera_suggestions):
+        field_prefix = f"camera_suggestions[{index}]"
+        if not isinstance(suggestion, dict):
+            errors.append(f"P5: 三联体 {tid} {layer} 层 {field_prefix} must be dict")
+            continue
+
+        signal = suggestion.get("signal")
+        if signal not in _VALID_CAMERA_SIGNALS:
+            errors.append(
+                f"P5: 三联体 {tid} {layer} 层 {field_prefix}.signal 非法：{signal}"
+            )
+
+        confidence = suggestion.get("confidence")
+        if confidence not in _VALID_CAMERA_CONFIDENCE:
+            errors.append(
+                f"P5: 三联体 {tid} {layer} 层 {field_prefix}.confidence 非法：{confidence}"
+            )
+
+        if not isinstance(suggestion.get("suggested_probe"), str):
+            errors.append(
+                f"P5: 三联体 {tid} {layer} 层 {field_prefix}.suggested_probe must be string"
+            )
+
+        if suggestion.get("accepted") is True and signal not in signals_observed:
+            errors.append(
+                f"P5: 三联体 {tid} {layer} 层 accepted camera signal must be present in signals_observed"
+            )
+
+    if _contains_frame_reference(record):
+        errors.append(f"P5: 三联体 {tid} {layer} 层 must not contain frame paths")
+
+    return errors
+
+
 def check_p5_quality_gate(records: list[dict]) -> list[str]:
     """Validate interview records. Returns list of error strings (empty = pass)."""
     errors: list[str] = []
@@ -113,6 +223,7 @@ def check_p5_quality_gate(records: list[dict]) -> list[str]:
         else:
             triplet_layer_order[tid].append(layer)
             triplet_records[tid][layer] = r
+        errors.extend(validate_camera_suggestions(r))
 
     for tid, ordered_layers in triplet_layer_order.items():
         layers = triplet_records[tid]

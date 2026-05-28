@@ -727,3 +727,152 @@ def test_p5_quality_gate_fails_duplicate_layer():
     ]
     errors = iss.check_p5_quality_gate(records)
     assert any("重复" in e for e in errors), f"Expected duplicate-layer error, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Camera assistance schema tests
+# ---------------------------------------------------------------------------
+
+def _camera_record(**overrides):
+    record = {
+        "triplet_id": "tg_001",
+        "target_variable": "lv_001",
+        "question_layer": "A",
+        "question_text": "题目",
+        "expert_answer": "有效回答",
+        "followup_asked": "这是怎么想到的？",
+        "followup_answer": "因为我先看边界条件",
+        "signals_observed": ["hesitated"],
+        "probe_suggestion": "你在衡量什么？",
+        "probe_adopted": True,
+        "probe_modified_text": None,
+        "operator_notes": "",
+        "answer_input_mode": "manual_cli",
+        "camera_assist_enabled": True,
+        "camera_suggestions": [
+            {
+                "signal": "hesitated",
+                "confidence": "medium",
+                "reason": "专家回答时出现明显停顿，可能正在权衡边界条件",
+                "suggested_probe": "你在衡量什么？",
+                "accepted": True,
+                "final_probe": "你在衡量什么？",
+            }
+        ],
+    }
+    record.update(overrides)
+    return record
+
+
+def _complete_camera_records(record):
+    records = []
+    for layer in ("A", "B", "C"):
+        item = dict(record)
+        item["question_layer"] = layer
+        item["question_text"] = f"{layer}题目"
+        if layer != "A":
+            item["followup_asked"] = ""
+            item["followup_answer"] = ""
+            item["signals_observed"] = []
+            item["probe_suggestion"] = ""
+            item["probe_adopted"] = None
+            item["camera_suggestions"] = []
+        records.append(item)
+    return records
+
+
+def test_build_record_supports_camera_fields():
+    record = iss.build_interview_record(
+        triplet_id="tg_001",
+        target_variable="lv_001",
+        layer="A",
+        question_text="题目",
+        expert_answer="回答",
+        followup_asked="追问",
+        followup_answer="追问回答",
+        signals_observed=["hesitated"],
+        probe_suggestion="你在衡量什么？",
+        probe_adopted=True,
+        probe_modified_text=None,
+        operator_notes="",
+        answer_input_mode="manual_cli",
+        camera_assist_enabled=True,
+        camera_suggestions=[
+            iss.build_camera_suggestion(
+                signal="hesitated",
+                confidence="medium",
+                reason="专家回答时出现明显停顿",
+                suggested_probe="你在衡量什么？",
+                accepted=True,
+                final_probe="你在衡量什么？",
+            )
+        ],
+    )
+    assert record["answer_input_mode"] == "manual_cli"
+    assert record["camera_assist_enabled"] is True
+    assert record["camera_suggestions"][0]["signal"] == "hesitated"
+
+
+def test_p5_quality_gate_accepts_valid_camera_suggestions():
+    errors = iss.check_p5_quality_gate(_complete_camera_records(_camera_record()))
+    assert errors == []
+
+
+def test_p5_quality_gate_rejects_invalid_camera_signal():
+    bad = _camera_record(camera_suggestions=[
+        {
+            "signal": "angry",
+            "confidence": "medium",
+            "reason": "情绪标签不能直接作为访谈信号",
+            "suggested_probe": "你在衡量什么？",
+            "accepted": False,
+            "final_probe": "",
+        }
+    ])
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("camera_suggestions[0].signal" in e for e in errors)
+
+
+def test_p5_quality_gate_rejects_invalid_camera_confidence():
+    bad = _camera_record(camera_suggestions=[
+        {
+            "signal": "hesitated",
+            "confidence": "very_high",
+            "reason": "置信度枚举非法",
+            "suggested_probe": "你在衡量什么？",
+            "accepted": False,
+            "final_probe": "",
+        }
+    ])
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("camera_suggestions[0].confidence" in e for e in errors)
+
+
+def test_p5_quality_gate_requires_accepted_signal_in_observed_signals():
+    bad = _camera_record(signals_observed=[], camera_suggestions=[
+        {
+            "signal": "hesitated",
+            "confidence": "medium",
+            "reason": "被采纳后必须进入 signals_observed",
+            "suggested_probe": "你在衡量什么？",
+            "accepted": True,
+            "final_probe": "你在衡量什么？",
+        }
+    ])
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("accepted camera signal" in e for e in errors)
+
+
+def test_p5_quality_gate_rejects_frame_paths_in_transcript():
+    bad = _camera_record(camera_suggestions=[
+        {
+            "signal": "hesitated",
+            "confidence": "medium",
+            "reason": "frame_path=/tmp/expert-skill-camera/sess/frame-001.jpg",
+            "suggested_probe": "你在衡量什么？",
+            "accepted": True,
+            "final_probe": "你在衡量什么？",
+        }
+    ])
+    errors = iss.check_p5_quality_gate(_complete_camera_records(bad))
+    assert any("must not contain frame paths" in e for e in errors)
