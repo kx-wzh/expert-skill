@@ -1111,3 +1111,54 @@ def test_transcript_md_redacts_frame_references_with_common_delimiters():
     assert "sess/frame-001.jpg" not in md
     assert ".jpg" not in md
     assert "frame_path" not in md
+
+
+def test_camera_assist_default_off_records_no_camera_suggestions(tmp_path):
+    base, discovery = setup_discovery_dir(tmp_path, [SAMPLE_GROUP], meta={"discovery": {}})
+    inputs = _full_session_inputs(group_count=1)
+    ret = iss.main(
+        argv=["--slug", "expert_a", "--base-dir", str(base)],
+        input_fn=make_input_fn(*inputs),
+        print_fn=lambda x: None,
+    )
+    assert ret == 0
+    transcript = json.loads((discovery / "interview_transcript.json").read_text(encoding="utf-8"))
+    assert all(record.get("camera_suggestions") in (None, []) for record in transcript)
+    assert all(record.get("camera_assist_enabled") in (None, False) for record in transcript)
+    assert all(record.get("answer_input_mode", "manual_cli") == "manual_cli" for record in transcript)
+
+
+def test_camera_assist_cli_records_enabled_fields_without_worker(tmp_path):
+    base, discovery = setup_discovery_dir(tmp_path, [SAMPLE_GROUP], meta={"discovery": {}})
+    inputs = _full_session_inputs(group_count=1)
+    ret = iss.main(
+        argv=[
+            "--slug", "expert_a",
+            "--base-dir", str(base),
+            "--camera-assist",
+            "--disable-camera-worker-for-test",
+        ],
+        input_fn=make_input_fn(*inputs),
+        print_fn=lambda x: None,
+    )
+    assert ret == 0
+    transcript = json.loads((discovery / "interview_transcript.json").read_text(encoding="utf-8"))
+    assert all(record["camera_assist_enabled"] is True for record in transcript)
+    assert all(record["camera_suggestions"] == [] for record in transcript)
+
+
+def test_stream_answer_input_sets_streaming_text_mode(tmp_path):
+    base, discovery = setup_discovery_dir(tmp_path, [SAMPLE_GROUP], meta={"discovery": {}})
+    inputs = _full_session_inputs(group_count=1)
+    ret = iss.main(
+        argv=[
+            "--slug", "expert_a",
+            "--base-dir", str(base),
+            "--answer-input", "stream",
+        ],
+        input_fn=make_input_fn(*inputs),
+        print_fn=lambda x: None,
+    )
+    assert ret == 0
+    transcript = json.loads((discovery / "interview_transcript.json").read_text(encoding="utf-8"))
+    assert all(record["answer_input_mode"] == "streaming_text" for record in transcript)

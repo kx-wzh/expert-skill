@@ -106,6 +106,13 @@ def build_camera_suggestion(
     }
 
 
+def normalize_answer_input_mode(raw_mode) -> str:
+    """Normalize CLI answer input modes to transcript values."""
+    if raw_mode == "stream":
+        return "streaming_text"
+    return "manual_cli"
+
+
 def suggest_probe_for_signals(question: dict, signals: list[str]) -> dict:
     """Map observed signals to suggested probe texts. Returns {signal: probe_text}."""
     triggers = question.get("probes", {}).get("signal_triggers", {})
@@ -298,6 +305,9 @@ def run_one_layer(
     layer: str,
     input_fn,
     print_fn,
+    answer_input_mode: str = "manual_cli",
+    camera_assist_enabled: bool = False,
+    camera_assist_worker=None,
 ) -> dict:
     """Conduct the interview for one question layer. Returns a record dict."""
     q_key = f"question_{layer}"
@@ -311,6 +321,14 @@ def run_one_layer(
     print_fn(question.get("text", "（题目文本缺失）"))
     print_fn("\n(请记录专家回答，输入完成后单独一行输入 /done)")
     expert_answer = _collect_multiline(input_fn)
+    camera_suggestions = []
+    if camera_assist_enabled and camera_assist_worker is not None:
+        camera_suggestions = camera_assist_worker(
+            group=group,
+            layer=layer,
+            question=question,
+            expert_answer=expert_answer,
+        ) or []
 
     probes = question.get("probes", {})
     primary_probe = probes.get("primary", "")
@@ -360,6 +378,9 @@ def run_one_layer(
         probe_adopted=probe_adopted,
         probe_modified_text=probe_modified_text,
         operator_notes=operator_notes,
+        answer_input_mode=answer_input_mode,
+        camera_assist_enabled=camera_assist_enabled,
+        camera_suggestions=camera_suggestions if camera_assist_enabled else None,
     )
 
 
@@ -372,6 +393,9 @@ def run_triplet_interview(
     input_fn=None,
     print_fn=None,
     persist_records_fn=None,
+    answer_input_mode: str = "manual_cli",
+    camera_assist_enabled: bool = False,
+    camera_assist_worker=None,
 ) -> list[dict]:
     """Run the A→B→C interview for one triplet group. Returns newly created records.
 
@@ -400,7 +424,15 @@ def run_triplet_interview(
     for layer in ("A", "B", "C"):
         if layer < start_layer:
             continue
-        record = run_one_layer(group, layer, input_fn, print_fn)
+        record = run_one_layer(
+            group,
+            layer,
+            input_fn,
+            print_fn,
+            answer_input_mode=answer_input_mode,
+            camera_assist_enabled=camera_assist_enabled,
+            camera_assist_worker=camera_assist_worker,
+        )
         new_records.append(record)
 
         all_records = records + new_records
@@ -507,7 +539,21 @@ def main(argv: list[str] | None = None, input_fn=None, print_fn=None) -> int:
                         help="从上次中断点继续")
     parser.add_argument("--dry-run", action="store_true", dest="dry_run",
                         help="打印访谈脚本但不写文件，不进入交互")
+    parser.add_argument("--camera-assist", action="store_true", dest="camera_assist")
+    parser.add_argument("--answer-input", choices=["manual_cli", "stream"],
+                        default="manual_cli", dest="answer_input")
+    parser.add_argument("--camera-frame-interval", type=float, default=3.0,
+                        dest="camera_frame_interval")
+    parser.add_argument("--camera-temp-dir", default="/tmp/expert-skill-camera",
+                        dest="camera_temp_dir")
+    parser.add_argument("--camera-analysis-timeout", type=float, default=30.0,
+                        dest="camera_analysis_timeout")
+    parser.add_argument("--disable-camera-worker-for-test", action="store_true",
+                        dest="disable_camera_worker_for_test",
+                        help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    answer_input_mode = normalize_answer_input_mode(args.answer_input)
+    camera_assist_worker = None
 
     if args.triplet_id and args.resume:
         print("错误：--triplet-id 与 --resume 不能同时使用", file=sys.stderr)
@@ -599,6 +645,9 @@ def main(argv: list[str] | None = None, input_fn=None, print_fn=None) -> int:
             force_start_layer=force_start_layer,
             input_fn=_input, print_fn=_print,
             persist_records_fn=_persist_records,
+            answer_input_mode=answer_input_mode,
+            camera_assist_enabled=args.camera_assist,
+            camera_assist_worker=camera_assist_worker,
         )
         records.extend(new_recs)
         if get_next_layer(records, gid) == "done":
