@@ -111,6 +111,11 @@ def _evidence_records_for_finding(finding: dict, transcript: list[dict]) -> list
     return [r for r in transcript if r.get("triplet_id") == triplet_id]
 
 
+def _triplet_records_for_finding(finding: dict, transcript: list[dict]) -> list[dict]:
+    triplet_id = finding.get("evidence", {}).get("triplet_id")
+    return [r for r in transcript if r.get("triplet_id") == triplet_id]
+
+
 def _quote_is_expert_text(quote: str, records: list[dict]) -> bool:
     return any(
         _contains_quote(record.get("expert_answer", ""), quote)
@@ -150,11 +155,13 @@ def _is_ungrounded_camera_context_evidence(finding: dict, transcript: list[dict]
     if not quote:
         return False
     records = _evidence_records_for_finding(finding, transcript)
-    if not any(record.get("camera_suggestions") for record in records):
+    triplet_records = _triplet_records_for_finding(finding, transcript)
+    camera_records = [record for record in triplet_records if record.get("camera_suggestions")]
+    if not camera_records:
         return False
-    if _quote_is_expert_text(quote, records):
+    if _quote_is_expert_text(quote, records) or _quote_is_expert_text(quote, triplet_records):
         return False
-    if _quote_is_decision_evidence(quote) and not _quote_matches_camera_suggestion_text(quote, records):
+    if _quote_is_decision_evidence(quote) and not _quote_matches_camera_suggestion_text(quote, camera_records):
         return False
     return True
 
