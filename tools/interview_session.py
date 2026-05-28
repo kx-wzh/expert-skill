@@ -279,9 +279,14 @@ class CameraAssistWorker:
 
     def start_answer(self, triplet_id: str, layer: str) -> None:
         if self._thread is not None and self._thread.is_alive():
+            self._stop_event.set()
+            self._thread.join(timeout=0.1)
             return
+        if self._thread is not None:
+            self._thread = None
         self._stop_event.clear()
-        self._suggestions = []
+        with self._lock:
+            self._suggestions = []
 
         def _loop() -> None:
             while not self._stop_event.is_set():
@@ -298,7 +303,8 @@ class CameraAssistWorker:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=max(self.analysis_timeout, 0.1) + 1.0)
-            self._thread = None
+            if not self._thread.is_alive():
+                self._thread = None
         with self._lock:
             return list(self._suggestions)
 
@@ -517,15 +523,24 @@ def run_one_layer(
     print_fn("=" * 60)
     print_fn(question.get("text", "（题目文本缺失）"))
     print_fn("\n(请记录专家回答，输入完成后单独一行输入 /done)")
+    if (
+        camera_assist_enabled
+        and camera_assist_worker is not None
+        and hasattr(camera_assist_worker, "start_answer")
+    ):
+        camera_assist_worker.start_answer(triplet_id, layer)
     expert_answer = _collect_multiline(input_fn)
     camera_suggestions = []
     if camera_assist_enabled and camera_assist_worker is not None:
-        camera_suggestions = camera_assist_worker(
-            group=group,
-            layer=layer,
-            question=question,
-            expert_answer=expert_answer,
-        ) or []
+        if hasattr(camera_assist_worker, "stop_answer"):
+            camera_suggestions = camera_assist_worker.stop_answer() or []
+        elif callable(camera_assist_worker):
+            camera_suggestions = camera_assist_worker(
+                group=group,
+                layer=layer,
+                question=question,
+                expert_answer=expert_answer,
+            ) or []
 
     probes = question.get("probes", {})
     primary_probe = probes.get("primary", "")
@@ -726,7 +741,12 @@ def _update_meta_status(meta_path: Path, status: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(argv: list[str] | None = None, input_fn=None, print_fn=None) -> int:
+def main(
+    argv: list[str] | None = None,
+    input_fn=None,
+    print_fn=None,
+    camera_worker_factory=None,
+) -> int:
     parser = argparse.ArgumentParser(description="P5 访谈记录工具")
     parser.add_argument("--slug", required=True)
     parser.add_argument("--base-dir", default="./skills/expert", dest="base_dir")
@@ -750,7 +770,6 @@ def main(argv: list[str] | None = None, input_fn=None, print_fn=None) -> int:
                         help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     answer_input_mode = normalize_answer_input_mode(args.answer_input)
-    camera_assist_worker = None
 
     if args.triplet_id and args.resume:
         print("错误：--triplet-id 与 --resume 不能同时使用", file=sys.stderr)
@@ -758,6 +777,17 @@ def main(argv: list[str] | None = None, input_fn=None, print_fn=None) -> int:
 
     _print = print_fn or print
     _input = input_fn or input
+    camera_assist_worker = None
+    if args.camera_assist and not args.disable_camera_worker_for_test:
+        if camera_worker_factory is not None:
+            camera_assist_worker = camera_worker_factory(args, _print)
+        else:
+            camera_assist_worker = CameraAssistWorker(
+                temp_root=Path(args.camera_temp_dir),
+                frame_interval=args.camera_frame_interval,
+                analysis_timeout=args.camera_analysis_timeout,
+                print_fn=_print,
+            )
 
     discovery_dir = Path(args.base_dir) / args.slug / "discovery"
     groups_path = discovery_dir / "triplet_groups.json"

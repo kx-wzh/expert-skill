@@ -1148,6 +1148,77 @@ def test_camera_assist_cli_records_enabled_fields_without_worker(tmp_path):
     assert all(record["camera_suggestions"] == [] for record in transcript)
 
 
+def test_camera_assist_main_uses_factory_worker_suggestions(tmp_path):
+    base, discovery = setup_discovery_dir(tmp_path, [SAMPLE_GROUP], meta={"discovery": {}})
+    inputs = _full_session_inputs(group_count=1)
+    factory_calls = []
+
+    class FakeWorker:
+        def __init__(self):
+            self.started = []
+
+        def start_answer(self, triplet_id, layer):
+            self.started.append((triplet_id, layer))
+
+        def stop_answer(self):
+            return [
+                iss.build_camera_suggestion(
+                    signal="hesitated",
+                    confidence="medium",
+                    reason="回答时有明显停顿",
+                    suggested_probe="你在衡量什么？",
+                )
+            ]
+
+    fake_worker = FakeWorker()
+
+    def factory(args, print_fn):
+        factory_calls.append((args.camera_frame_interval, print_fn))
+        return fake_worker
+
+    ret = iss.main(
+        argv=["--slug", "expert_a", "--base-dir", str(base), "--camera-assist"],
+        input_fn=make_input_fn(*inputs),
+        print_fn=lambda x: None,
+        camera_worker_factory=factory,
+    )
+
+    assert ret == 0
+    assert factory_calls
+    assert fake_worker.started[0] == ("tg_001", "A")
+    transcript = json.loads((discovery / "interview_transcript.json").read_text(encoding="utf-8"))
+    assert all(record["camera_assist_enabled"] is True for record in transcript)
+    assert all(record["camera_suggestions"][0]["signal"] == "hesitated" for record in transcript)
+
+
+def test_disable_camera_worker_for_test_skips_factory_but_records_enabled_fields(tmp_path):
+    base, discovery = setup_discovery_dir(tmp_path, [SAMPLE_GROUP], meta={"discovery": {}})
+    inputs = _full_session_inputs(group_count=1)
+    factory_calls = []
+
+    def factory(args, print_fn):
+        factory_calls.append((args, print_fn))
+        raise AssertionError("factory should not be called")
+
+    ret = iss.main(
+        argv=[
+            "--slug", "expert_a",
+            "--base-dir", str(base),
+            "--camera-assist",
+            "--disable-camera-worker-for-test",
+        ],
+        input_fn=make_input_fn(*inputs),
+        print_fn=lambda x: None,
+        camera_worker_factory=factory,
+    )
+
+    assert ret == 0
+    assert factory_calls == []
+    transcript = json.loads((discovery / "interview_transcript.json").read_text(encoding="utf-8"))
+    assert all(record["camera_assist_enabled"] is True for record in transcript)
+    assert all(record["camera_suggestions"] == [] for record in transcript)
+
+
 def test_stream_answer_input_sets_streaming_text_mode(tmp_path):
     base, discovery = setup_discovery_dir(tmp_path, [SAMPLE_GROUP], meta={"discovery": {}})
     inputs = _full_session_inputs(group_count=1)
@@ -1281,3 +1352,42 @@ def test_camera_assist_worker_captures_during_answer_until_stopped(tmp_path):
     suggestions = worker.stop_answer()
     assert capture_count["value"] >= 2
     assert any(item["signal"] == "hesitated" for item in suggestions)
+
+
+def test_stop_answer_retains_thread_when_join_times_out_and_clears_completed_thread(tmp_path):
+    class FakeThread:
+        def __init__(self, alive_after_join):
+            self.alive_after_join = alive_after_join
+            self.join_calls = []
+
+        def join(self, timeout=None):
+            self.join_calls.append(timeout)
+
+        def is_alive(self):
+            return self.alive_after_join
+
+    worker = iss.CameraAssistWorker(
+        temp_root=tmp_path,
+        frame_interval=0.01,
+        analysis_timeout=0.05,
+        print_fn=lambda x: None,
+        capture_frame_fn=lambda path: (False, ""),
+        session_id="sess-stop",
+    )
+    alive_thread = FakeThread(alive_after_join=True)
+    worker._thread = alive_thread
+    worker._suggestions = [iss.build_camera_suggestion("hesitated", "low", "r", "p")]
+
+    suggestions = worker.stop_answer()
+
+    assert suggestions[0]["signal"] == "hesitated"
+    assert worker._thread is alive_thread
+    assert alive_thread.join_calls
+
+    completed_thread = FakeThread(alive_after_join=False)
+    worker._thread = completed_thread
+
+    worker.stop_answer()
+
+    assert worker._thread is None
+    assert completed_thread.join_calls
